@@ -4,6 +4,10 @@ WikiNess est un script Python qui permet de récupérer des informations sur les
 
 ## Installation
 
+```powershell
+pip.exe install requirements.txt
+```
+
 Pour utiliser WikiNess, vous devez avoir Python 3.x installé sur votre système. Vous pouvez ensuite télécharger le script depuis le dépôt GitHub et l'exécuter à l'aide de la commande `python WikiNess.py`.
 
 ## Fonctionnalités
