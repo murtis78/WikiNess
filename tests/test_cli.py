@@ -1,0 +1,151 @@
+import json
+import socket
+
+import pytest
+from typer.testing import CliRunner
+
+from wikiness.cli import app
+from wikiness.models import CVERecord
+from wikiness.storage import init_schema, open_db, upsert_cve
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def db_path(tmp_path):
+    path = tmp_path / "test.db"
+    conn = open_db(path)
+    init_schema(conn)
+    upsert_cve(
+        conn,
+        CVERecord(
+            cve_id="CVE-2024-99001",
+            title="Apache HTTP Server RCE",
+            description="Critical remote code execution vulnerability in Apache HTTP Server.",
+            cvss_score=9.8,
+            cvss_severity="CRITICAL",
+            kev=True,
+            epss_score=0.97,
+            epss_percentile=0.9998,
+            references=["https://httpd.apache.org/security/vulnerabilities_24.html"],
+            sources=["NVD", "CISA_KEV"],
+        ),
+    )
+    upsert_cve(
+        conn,
+        CVERecord(
+            cve_id="CVE-2024-99002",
+            title="WordPress SQL Injection",
+            description="SQL injection vulnerability in WordPress plugin allows database access.",
+            cvss_score=6.5,
+            cvss_severity="MEDIUM",
+            kev=False,
+            epss_score=0.01,
+            epss_percentile=0.65,
+            sources=["NVD"],
+        ),
+    )
+    conn.close()
+    return path
+
+
+def test_search_json_valid(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "apache"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert isinstance(data, list)
+
+
+def test_search_returns_matching_cve(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "apache"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert data[0]["cve_id"] == "CVE-2024-99001"
+
+
+def test_search_kev_only_flag(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "vulnerability", "--kev-only"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert all(item["kev"] for item in data)
+
+
+def test_search_min_epss_filter(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "vulnerability", "--min-epss", "0.5"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert all(item["epss_score"] >= 0.5 for item in data)
+
+
+def test_show_json_valid(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "show", "CVE-2024-99001"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert data["cve_id"] == "CVE-2024-99001"
+    assert data["kev"] is True
+    assert "priority" in data
+
+
+def test_show_includes_priority_components(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "show", "CVE-2024-99001"])
+    data = json.loads(r.output)
+    p = data["priority"]
+    assert "final_score" in p
+    assert "base_cvss" in p
+    assert "kev_boost" in p
+    assert "epss_boost" in p
+    assert "reason" in p
+
+
+def test_show_not_found_exits_1(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-9999-00000"])
+    assert r.exit_code == 1
+
+
+def test_prioritize_json_valid(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert isinstance(data, list)
+    assert len(data) >= 1
+
+
+def test_prioritize_ordered_by_score(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize"])
+    data = json.loads(r.output)
+    scores = [item["priority"]["final_score"] for item in data]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_prioritize_kev_only(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize", "--kev-only"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert all(item["kev"] for item in data)
+
+
+def test_stats_json_valid(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "stats"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert data["total_cves"] == 2
+    assert data["kev_count"] == 1
+    assert data["critical_count"] == 1
+
+
+def test_search_no_network(db_path, monkeypatch):
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "apache"])
+    assert r.exit_code == 0
+
+
+def test_show_no_network(db_path, monkeypatch):
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "show", "CVE-2024-99001"])
+    assert r.exit_code == 0
+
+
+def test_prioritize_no_network(db_path, monkeypatch):
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize"])
+    assert r.exit_code == 0
