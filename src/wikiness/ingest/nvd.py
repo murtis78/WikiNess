@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import Iterator, Optional
 
 import httpx
 
 from wikiness.config import NVD_BASE_URL, NVD_RESULTS_PER_PAGE
 from wikiness.models import CVERecord
+
+_NVD_DATE_FMT = "%Y-%m-%dT%H:%M:%S.%f"
+_NVD_MAX_RANGE_DAYS = 120
 
 
 def parse_nvd_cve(vuln: dict) -> CVERecord:
@@ -49,6 +53,81 @@ def parse_nvd_cve(vuln: dict) -> CVERecord:
     )
 
 
+def _nvd_date_windows(start: str, end: str) -> list[tuple[str, str]]:
+    """Split [start, end] into ≤120-day windows for NVD API compliance."""
+    dt_start = datetime.strptime(start, _NVD_DATE_FMT)
+    dt_end = datetime.strptime(end, _NVD_DATE_FMT)
+    windows: list[tuple[str, str]] = []
+    cursor = dt_start
+    while cursor < dt_end:
+        win_end = min(cursor + timedelta(days=_NVD_MAX_RANGE_DAYS), dt_end)
+        windows.append((
+            cursor.strftime(_NVD_DATE_FMT)[:-3],
+            win_end.strftime(_NVD_DATE_FMT)[:-3],
+        ))
+        cursor = win_end
+    return windows
+
+
+def _get_with_retry(
+    client: httpx.Client,
+    url: str,
+    params: dict,
+    headers: dict,
+    max_retries: int = 3,
+) -> httpx.Response:
+    """GET with exponential backoff on 5xx or transport errors."""
+    for attempt in range(max_retries):
+        try:
+            resp = client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            return resp
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code < 500 or attempt == max_retries - 1:
+                raise
+            time.sleep(5.0 * (2 ** attempt))
+        except httpx.TransportError:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(5.0 * (2 ** attempt))
+    raise RuntimeError("unreachable")
+
+
+def _iter_window(
+    client: httpx.Client,
+    headers: dict,
+    api_key: Optional[str],
+    pub_start_date: Optional[str],
+    pub_end_date: Optional[str],
+) -> Iterator[list[CVERecord]]:
+    start_index = 0
+    total: Optional[int] = None
+
+    while total is None or start_index < total:
+        params: dict = {
+            "startIndex": start_index,
+            "resultsPerPage": NVD_RESULTS_PER_PAGE,
+        }
+        if pub_start_date:
+            params["pubStartDate"] = pub_start_date
+        if pub_end_date:
+            params["pubEndDate"] = pub_end_date
+
+        resp = _get_with_retry(client, NVD_BASE_URL, params, headers)
+        data = resp.json()
+
+        total = data["totalResults"]
+        vulns = data.get("vulnerabilities", [])
+        if not vulns:
+            break
+
+        yield [parse_nvd_cve(v) for v in vulns]
+
+        start_index += len(vulns)
+        if start_index < total:
+            time.sleep(6.0 if not api_key else 0.6)
+
+
 def iter_nvd_pages(
     api_key: Optional[str] = None,
     pub_start_date: Optional[str] = None,
@@ -58,33 +137,15 @@ def iter_nvd_pages(
     if api_key:
         headers["apiKey"] = api_key
 
-    start_index = 0
-    total: Optional[int] = None
+    if pub_start_date and not pub_end_date:
+        pub_end_date = datetime.utcnow().strftime(_NVD_DATE_FMT)[:-3]
+
+    windows: list[tuple[Optional[str], Optional[str]]]
+    if pub_start_date and pub_end_date:
+        windows = _nvd_date_windows(pub_start_date, pub_end_date)
+    else:
+        windows = [(None, None)]
 
     with httpx.Client(timeout=60) as client:
-        while total is None or start_index < total:
-            params: dict = {
-                "startIndex": start_index,
-                "resultsPerPage": NVD_RESULTS_PER_PAGE,
-            }
-            if pub_start_date:
-                params["pubStartDate"] = pub_start_date
-            if pub_end_date:
-                params["pubEndDate"] = pub_end_date
-
-            resp = client.get(NVD_BASE_URL, params=params, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-
-            total = data["totalResults"]
-            vulns = data.get("vulnerabilities", [])
-
-            if not vulns:
-                break
-
-            yield [parse_nvd_cve(v) for v in vulns]
-
-            start_index += len(vulns)
-            if start_index < total:
-                # NVD rate limit: 5 req/30s without key, 50/30s with key
-                time.sleep(6.0 if not api_key else 0.6)
+        for win_start, win_end in windows:
+            yield from _iter_window(client, headers, api_key, win_start, win_end)

@@ -122,3 +122,63 @@ def test_ingest_parsers_do_not_use_network(monkeypatch, nvd_data, epss_data, kev
     assert len(scores) == 2
     kev_records = parse_kev_catalog(kev_data)
     assert len(kev_records) == 1
+
+
+# WN-003 — NVD date window tests
+
+
+from wikiness.ingest.nvd import _nvd_date_windows  # noqa: E402
+
+
+def test_nvd_date_windows_single_window():
+    windows = _nvd_date_windows("2026-05-01T00:00:00.000", "2026-06-08T00:00:00.000")
+    assert len(windows) == 1
+    assert windows[0][0] == "2026-05-01T00:00:00.000"
+    assert windows[0][1] == "2026-06-08T00:00:00.000"
+
+
+def test_nvd_date_windows_splits_at_120_days():
+    # 2025-01-01 to 2025-09-01 = 243 days → 3 windows
+    windows = _nvd_date_windows("2025-01-01T00:00:00.000", "2025-09-01T00:00:00.000")
+    assert len(windows) == 3
+    for i in range(len(windows) - 1):
+        assert windows[i][1] == windows[i + 1][0]
+
+
+def test_nvd_date_windows_exact_120_days():
+    # 2026-01-01 to 2026-05-01 = exactly 120 days → 1 window (no split)
+    windows = _nvd_date_windows("2026-01-01T00:00:00.000", "2026-05-01T00:00:00.000")
+    assert len(windows) == 1
+
+
+def test_iter_nvd_pages_auto_sets_end_date(monkeypatch):
+    """When pub_start_date is given without pub_end_date, pubEndDate is auto-set."""
+    from wikiness.ingest.nvd import iter_nvd_pages
+
+    captured_params: list[dict] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {"totalResults": 0, "vulnerabilities": []}
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *a: object) -> None:
+            pass
+
+        def get(self, url: str, params: dict, headers: dict) -> FakeResponse:
+            captured_params.append(dict(params))
+            return FakeResponse()
+
+    monkeypatch.setattr("wikiness.ingest.nvd.httpx.Client", lambda **kw: FakeClient())
+
+    list(iter_nvd_pages(pub_start_date="2026-06-01T00:00:00.000"))
+
+    assert captured_params, "at least one NVD request must be made"
+    assert "pubEndDate" in captured_params[0], "pubEndDate must be auto-set"
+    assert "pubStartDate" in captured_params[0]
