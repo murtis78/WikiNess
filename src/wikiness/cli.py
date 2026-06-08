@@ -61,19 +61,27 @@ def _global(
 @sync_app.command("nvd")
 def sync_nvd(
     api_key: Optional[str] = typer.Option(None, envvar="NVD_API_KEY", help="NVD API key."),
-    since: Optional[str] = typer.Option(None, help="ISO date to sync from (YYYY-MM-DD)."),
+    since: Optional[str] = typer.Option(None, help="ISO date to sync from (YYYY-MM-DD), by publication date."),
+    since_modified: Optional[str] = typer.Option(
+        None, "--since-modified", help="ISO date to sync from (YYYY-MM-DD), by last modification date."
+    ),
 ) -> None:
     """Sync CVE records from NVD (requires network)."""
     from wikiness.ingest.nvd import iter_nvd_pages
+
+    if since and since_modified:
+        err_console.print("[red]Error:[/red] --since and --since-modified are mutually exclusive.")
+        raise typer.Exit(1)
 
     conn = open_db(_state.db_path)
     init_schema(conn)
 
     total = 0
     pub_start = f"{since}T00:00:00.000" if since else None
+    mod_start = f"{since_modified}T00:00:00.000" if since_modified else None
 
     with console.status("Syncing NVD…"):
-        for page in iter_nvd_pages(api_key=api_key, pub_start_date=pub_start):
+        for page in iter_nvd_pages(api_key=api_key, pub_start_date=pub_start, last_mod_start_date=mod_start):
             for record in page:
                 upsert_cve(conn, record)
                 total += 1
@@ -130,10 +138,13 @@ def sync_kev() -> None:
 @sync_app.command("all")
 def sync_all(
     api_key: Optional[str] = typer.Option(None, envvar="NVD_API_KEY"),
-    since: Optional[str] = typer.Option(None, help="ISO date to sync from (YYYY-MM-DD)."),
+    since: Optional[str] = typer.Option(None, help="ISO date to sync from (YYYY-MM-DD), by publication date."),
+    since_modified: Optional[str] = typer.Option(
+        None, "--since-modified", help="ISO date to sync from (YYYY-MM-DD), by last modification date."
+    ),
 ) -> None:
     """Sync all sources: NVD, EPSS, CISA KEV."""
-    sync_nvd(api_key=api_key, since=since)
+    sync_nvd(api_key=api_key, since=since, since_modified=since_modified)
     sync_epss()
     sync_kev()
 

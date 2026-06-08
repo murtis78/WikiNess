@@ -124,7 +124,7 @@ def test_ingest_parsers_do_not_use_network(monkeypatch, nvd_data, epss_data, kev
     assert len(kev_records) == 1
 
 
-# WN-003 — NVD date window tests
+# WN-003 / WN-004 — NVD date window tests
 
 
 from wikiness.ingest.nvd import _nvd_date_windows  # noqa: E402
@@ -182,3 +182,78 @@ def test_iter_nvd_pages_auto_sets_end_date(monkeypatch):
     assert captured_params, "at least one NVD request must be made"
     assert "pubEndDate" in captured_params[0], "pubEndDate must be auto-set"
     assert "pubStartDate" in captured_params[0]
+
+
+# WN-004 — --since-modified tests
+
+
+def _make_fake_client(captured_params: list[dict]) -> type:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict:
+            return {"totalResults": 0, "vulnerabilities": []}
+
+    class FakeClient:
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *a: object) -> None:
+            pass
+
+        def get(self, url: str, params: dict, headers: dict) -> FakeResponse:
+            captured_params.append(dict(params))
+            return FakeResponse()
+
+    return FakeClient
+
+
+def test_iter_nvd_pages_auto_sets_last_mod_end_date(monkeypatch):
+    """last_mod_start_date without last_mod_end_date → lastModEndDate auto-set."""
+    from wikiness.ingest.nvd import iter_nvd_pages
+
+    captured: list[dict] = []
+    monkeypatch.setattr("wikiness.ingest.nvd.httpx.Client", lambda **kw: _make_fake_client(captured)())
+    list(iter_nvd_pages(last_mod_start_date="2026-06-01T00:00:00.000"))
+
+    assert captured, "at least one request must be made"
+    assert "lastModEndDate" in captured[0], "lastModEndDate must be auto-set"
+    assert "lastModStartDate" in captured[0]
+
+
+def test_iter_nvd_pages_last_mod_uses_correct_param_names(monkeypatch):
+    """lastModStartDate / lastModEndDate must use correct NVD API param names (not pubStartDate)."""
+    from wikiness.ingest.nvd import iter_nvd_pages
+
+    captured: list[dict] = []
+    monkeypatch.setattr("wikiness.ingest.nvd.httpx.Client", lambda **kw: _make_fake_client(captured)())
+    list(iter_nvd_pages(
+        last_mod_start_date="2026-06-01T00:00:00.000",
+        last_mod_end_date="2026-06-08T00:00:00.000",
+    ))
+
+    assert "lastModStartDate" in captured[0]
+    assert "lastModEndDate" in captured[0]
+    assert "pubStartDate" not in captured[0]
+    assert "pubEndDate" not in captured[0]
+
+
+def test_iter_nvd_pages_pub_and_mod_mutually_exclusive():
+    """Passing both pub_start_date and last_mod_start_date raises ValueError."""
+    import pytest
+    from wikiness.ingest.nvd import iter_nvd_pages
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        list(iter_nvd_pages(
+            pub_start_date="2026-06-01T00:00:00.000",
+            last_mod_start_date="2026-06-01T00:00:00.000",
+        ))
+
+
+def test_nvd_date_windows_reusable_for_mod_dates():
+    """_nvd_date_windows splits mod-date ranges with the same 120-day logic."""
+    windows = _nvd_date_windows("2025-01-01T00:00:00.000", "2025-09-01T00:00:00.000")
+    assert len(windows) == 3
+    for i in range(len(windows) - 1):
+        assert windows[i][1] == windows[i + 1][0]

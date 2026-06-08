@@ -149,3 +149,27 @@ def test_prioritize_no_network(db_path, monkeypatch):
     monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
     r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize"])
     assert r.exit_code == 0
+
+
+# WN-004 — --since-modified CLI tests
+
+
+def test_sync_nvd_since_modified_accepted(tmp_path, monkeypatch):
+    """--since-modified is accepted and completes without a live network call."""
+    monkeypatch.setattr("wikiness.ingest.nvd.iter_nvd_pages", lambda **kw: iter([]))
+    r = runner.invoke(app, ["--db", str(tmp_path / "test.db"), "sync", "nvd", "--since-modified", "2026-06-01"])
+    assert r.exit_code == 0
+
+
+def test_sync_nvd_since_and_since_modified_mutually_exclusive(tmp_path):
+    """--since and --since-modified together must exit with code 1."""
+    r = runner.invoke(
+        app,
+        [
+            "--db", str(tmp_path / "test.db"),
+            "sync", "nvd",
+            "--since", "2026-06-01",
+            "--since-modified", "2026-06-01",
+        ],
+    )
+    assert r.exit_code == 1

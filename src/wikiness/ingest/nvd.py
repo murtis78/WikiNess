@@ -99,6 +99,8 @@ def _iter_window(
     api_key: Optional[str],
     pub_start_date: Optional[str],
     pub_end_date: Optional[str],
+    last_mod_start_date: Optional[str] = None,
+    last_mod_end_date: Optional[str] = None,
 ) -> Iterator[list[CVERecord]]:
     start_index = 0
     total: Optional[int] = None
@@ -112,6 +114,10 @@ def _iter_window(
             params["pubStartDate"] = pub_start_date
         if pub_end_date:
             params["pubEndDate"] = pub_end_date
+        if last_mod_start_date:
+            params["lastModStartDate"] = last_mod_start_date
+        if last_mod_end_date:
+            params["lastModEndDate"] = last_mod_end_date
 
         resp = _get_with_retry(client, NVD_BASE_URL, params, headers)
         data = resp.json()
@@ -132,20 +138,32 @@ def iter_nvd_pages(
     api_key: Optional[str] = None,
     pub_start_date: Optional[str] = None,
     pub_end_date: Optional[str] = None,
+    last_mod_start_date: Optional[str] = None,
+    last_mod_end_date: Optional[str] = None,
 ) -> Iterator[list[CVERecord]]:
     headers: dict[str, str] = {}
     if api_key:
         headers["apiKey"] = api_key
 
+    if pub_start_date and last_mod_start_date:
+        raise ValueError("pub_start_date and last_mod_start_date are mutually exclusive")
+
     if pub_start_date and not pub_end_date:
         pub_end_date = datetime.utcnow().strftime(_NVD_DATE_FMT)[:-3]
+    if last_mod_start_date and not last_mod_end_date:
+        last_mod_end_date = datetime.utcnow().strftime(_NVD_DATE_FMT)[:-3]
 
-    windows: list[tuple[Optional[str], Optional[str]]]
     if pub_start_date and pub_end_date:
-        windows = _nvd_date_windows(pub_start_date, pub_end_date)
+        raw_windows = _nvd_date_windows(pub_start_date, pub_end_date)
+        win4: list[tuple[Optional[str], Optional[str], Optional[str], Optional[str]]] = [
+            (ws, we, None, None) for ws, we in raw_windows
+        ]
+    elif last_mod_start_date and last_mod_end_date:
+        raw_windows = _nvd_date_windows(last_mod_start_date, last_mod_end_date)
+        win4 = [(None, None, ws, we) for ws, we in raw_windows]
     else:
-        windows = [(None, None)]
+        win4 = [(None, None, None, None)]
 
     with httpx.Client(timeout=60) as client:
-        for win_start, win_end in windows:
-            yield from _iter_window(client, headers, api_key, win_start, win_end)
+        for p_start, p_end, m_start, m_end in win4:
+            yield from _iter_window(client, headers, api_key, p_start, p_end, m_start, m_end)
