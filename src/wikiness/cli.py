@@ -307,6 +307,7 @@ def stats() -> None:
     total = count_cves(conn)
     kev_count = conn.execute("SELECT COUNT(*) FROM cve WHERE kev = 1").fetchone()[0]
     critical_count = conn.execute("SELECT COUNT(*) FROM cve WHERE cvss_severity = 'CRITICAL'").fetchone()[0]
+    high_count = conn.execute("SELECT COUNT(*) FROM cve WHERE cvss_severity = 'HIGH'").fetchone()[0]
     with_epss = conn.execute("SELECT COUNT(*) FROM cve WHERE epss_score IS NOT NULL").fetchone()[0]
 
     sync_sources = {src: get_sync_state(conn, src) for src in ("nvd", "epss", "kev")}
@@ -318,6 +319,7 @@ def stats() -> None:
                     "total_cves": total,
                     "kev_count": kev_count,
                     "critical_count": critical_count,
+                    "high_count": high_count,
                     "with_epss_score": with_epss,
                     "sync_state": sync_sources,
                 },
@@ -330,6 +332,7 @@ def stats() -> None:
     console.print(f"  Total CVEs:     {total}")
     console.print(f"  CISA KEV:       {kev_count}")
     console.print(f"  Critical CVSS:  {critical_count}")
+    console.print(f"  High CVSS:      {high_count}")
     console.print(f"  With EPSS:      {with_epss}")
     console.print("\n[bold]Sync State:[/bold]")
     for src, state in sync_sources.items():

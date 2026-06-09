@@ -131,6 +131,31 @@ def test_stats_json_valid(db_path):
     assert data["total_cves"] == 2
     assert data["kev_count"] == 1
     assert data["critical_count"] == 1
+    assert "high_count" in data
+    assert data["high_count"] == 0
+
+
+def test_stats_high_severity_count(tmp_path):
+    path = tmp_path / "test.db"
+    conn = open_db(path)
+    init_schema(conn)
+    upsert_cve(
+        conn,
+        CVERecord(
+            cve_id="CVE-2024-88001",
+            title="High Severity Test",
+            description="High severity test CVE.",
+            cvss_score=7.5,
+            cvss_severity="HIGH",
+            kev=False,
+            sources=["NVD"],
+        ),
+    )
+    conn.close()
+    r = runner.invoke(app, ["--db", str(path), "--json", "stats"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert data["high_count"] == 1
 
 
 def test_search_no_network(db_path, monkeypatch):
