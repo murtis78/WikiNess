@@ -87,3 +87,37 @@ def test_reason_shows_all_components():
 def test_no_data_reason_message():
     cve = CVERecord(cve_id="CVE-2024-99001")
     assert "no scored data" in compute_priority(cve).reason
+
+
+def test_poc_boost_is_2_when_exploit_present():
+    cve = CVERecord(cve_id="CVE-2024-99001", public_exploit_available=True)
+    assert compute_priority(cve).poc_boost == 2.0
+
+
+def test_poc_boost_is_zero_when_no_exploit():
+    cve = CVERecord(cve_id="CVE-2024-99001", public_exploit_available=False)
+    assert compute_priority(cve).poc_boost == 0.0
+
+
+def test_poc_boost_adds_to_final_score():
+    cve = CVERecord(cve_id="CVE-2024-99001", cvss_score=7.0, public_exploit_available=True)
+    assert compute_priority(cve).final_score == pytest.approx(9.0)
+
+
+def test_poc_boost_in_reason():
+    cve = CVERecord(cve_id="CVE-2024-99001", public_exploit_available=True, poc_count=3)
+    assert "PoC" in compute_priority(cve).reason
+
+
+def test_final_score_all_components_with_poc():
+    cve = CVERecord(
+        cve_id="CVE-2024-99001",
+        cvss_score=9.8,
+        cvss_severity="CRITICAL",
+        kev=True,
+        epss_score=0.5,
+        public_exploit_available=True,
+    )
+    score = compute_priority(cve)
+    expected = 9.8 + 3.0 + (0.5 * 2.0) + 1.0 + 2.0
+    assert score.final_score == pytest.approx(expected, rel=1e-4)

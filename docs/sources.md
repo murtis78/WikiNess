@@ -30,6 +30,20 @@
 - **WikiNess command:** `wikiness sync kev`
 - **Note:** CISA KEV entries that are not yet in the local NVD dataset are inserted as partial records and enriched when NVD is synced
 
+## PoC-in-GitHub — nomi-sec
+
+- **Provider:** nomi-sec (community, open-source, CC0)
+- **Repository:** https://github.com/nomi-sec/PoC-in-GitHub
+- **Feed:** `https://raw.githubusercontent.com/nomi-sec/PoC-in-GitHub/master/<YEAR>/<CVE-ID>.json`
+  - `<YEAR>` derived from CVE-ID (e.g. `CVE-2021-44228` → `2021`)
+  - HTTP 404 = no PoC known for that CVE (not an error)
+- **License:** CC0 1.0 Universal (Public Domain Dedication)
+- **Data:** List of public proof-of-concept repositories per CVE; fields used: count of entries
+- **Rate limits:** GitHub CDN — no enforced rate limit; 1 GET per CVE at sync time
+- **WikiNess command:** `wikiness sync poc`
+- **Note:** PoC sync requires CVEs already present in the local database. Enriches existing records only.
+- **Auth:** none (keyless, public CDN)
+
 ## Priority score formula
 
 ```
@@ -37,6 +51,7 @@ priority = cvss_score
          + 3.0 if kev == True
          + epss_score * 2.0
          + 1.0 if cvss_severity == CRITICAL
+         + 2.0 if public_exploit_available == True
 ```
 
 All components are visible in `wikiness show` and `wikiness prioritize` output.

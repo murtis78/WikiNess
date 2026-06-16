@@ -257,3 +257,96 @@ def test_nvd_date_windows_reusable_for_mod_dates():
     assert len(windows) == 3
     for i in range(len(windows) - 1):
         assert windows[i][1] == windows[i + 1][0]
+
+
+# PoC-in-GitHub tests
+
+from wikiness.ingest.poc import _year_from_cve, fetch_poc, parse_poc_response  # noqa: E402
+
+
+@pytest.fixture
+def poc_data():
+    return json.loads((FIXTURES / "poc_found.json").read_text())
+
+
+def test_year_from_cve_2024():
+    assert _year_from_cve("CVE-2024-1234") == "2024"
+
+
+def test_year_from_cve_log4shell():
+    assert _year_from_cve("CVE-2021-44228") == "2021"
+
+
+def test_parse_poc_found(poc_data):
+    result = parse_poc_response(poc_data)
+    assert result["public_exploit_available"] is True
+    assert result["poc_count"] == 2
+
+
+def test_parse_poc_not_found():
+    result = parse_poc_response([])
+    assert result["public_exploit_available"] is False
+    assert result["poc_count"] == 0
+
+
+def test_fetch_poc_url_contains_year_and_cve():
+    captured: list[str] = []
+
+    class FakeResp:
+        status_code = 404
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class FakeClient:
+        def get(self, url: str) -> FakeResp:
+            captured.append(url)
+            return FakeResp()
+
+    fetch_poc("CVE-2024-1234", FakeClient())
+    assert len(captured) == 1
+    assert "2024" in captured[0]
+    assert "CVE-2024-1234" in captured[0]
+    assert "raw.githubusercontent.com" in captured[0]
+
+
+def test_fetch_poc_404_returns_no_exploit():
+    class FakeResp:
+        status_code = 404
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class FakeClient:
+        def get(self, url: str) -> FakeResp:
+            return FakeResp()
+
+    result = fetch_poc("CVE-2024-99999", FakeClient())
+    assert result["public_exploit_available"] is False
+    assert result["poc_count"] == 0
+
+
+def test_fetch_poc_200_returns_exploit(poc_data):
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> list:
+            return poc_data
+
+    class FakeClient:
+        def get(self, url: str) -> FakeResp:
+            return FakeResp()
+
+    result = fetch_poc("CVE-2024-99001", FakeClient())
+    assert result["public_exploit_available"] is True
+    assert result["poc_count"] == 2
+
+
+def test_parse_poc_no_network(monkeypatch):
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+    result = parse_poc_response([{"html_url": "https://github.com/example/repo"}])
+    assert result["public_exploit_available"] is True
+    assert result["poc_count"] == 1

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "CVE-2024-99001",
+    "html_url": "https://github.com/example/poc-cve-2024-99001",
+    "created_at": "2024-01-15T12:00:00Z",
+    "full_name": "example/poc-cve-2024-99001",
+    "description": "Proof of concept for CVE-2024-99001",
+    "stargazers_count": 42
+  },
+  {
+    "id": "CVE-2024-99001",
+    "html_url": "https://github.com/another/cve-2024-99001-exploit",
+    "created_at": "2024-01-20T00:00:00Z",
+    "full_name": "another/cve-2024-99001-exploit",
+    "description": "Another exploit for CVE-2024-99001",
+    "stargazers_count": 15
+  }
+]

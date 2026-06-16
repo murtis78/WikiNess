@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS cve (
     kev_required_action             TEXT,
     references_json                 TEXT NOT NULL DEFAULT '[]',
     sources_json                    TEXT NOT NULL DEFAULT '[]',
+    public_exploit_available        INTEGER NOT NULL DEFAULT 0,
+    poc_count                       INTEGER NOT NULL DEFAULT 0,
     updated_at                      TEXT NOT NULL
 );
 
@@ -74,6 +76,15 @@ def open_db(db_path: Path) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    for col_ddl in (
+        "ALTER TABLE cve ADD COLUMN public_exploit_available INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE cve ADD COLUMN poc_count INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(col_ddl)
+        except Exception:
+            pass  # column already exists
+    conn.commit()
 
 
 def upsert_cve(conn: sqlite3.Connection, record: CVERecord) -> None:
@@ -85,8 +96,8 @@ def upsert_cve(conn: sqlite3.Connection, record: CVERecord) -> None:
             cvss_score, cvss_severity, cvss_vector,
             epss_score, epss_percentile,
             kev, kev_due_date, kev_known_ransomware_campaign_use, kev_required_action,
-            references_json, sources_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            references_json, sources_json, public_exploit_available, poc_count, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cve_id) DO UPDATE SET
             title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
             description = CASE WHEN excluded.description != '' THEN excluded.description ELSE description END,
@@ -111,6 +122,8 @@ def upsert_cve(conn: sqlite3.Connection, record: CVERecord) -> None:
                 WHEN excluded.sources_json != '[]' THEN excluded.sources_json
                 ELSE sources_json
             END,
+            public_exploit_available = MAX(excluded.public_exploit_available, public_exploit_available),
+            poc_count = MAX(excluded.poc_count, poc_count),
             updated_at = excluded.updated_at
         """,
         (
@@ -130,6 +143,8 @@ def upsert_cve(conn: sqlite3.Connection, record: CVERecord) -> None:
             record.kev_required_action,
             json.dumps(record.references),
             json.dumps(record.sources),
+            1 if record.public_exploit_available else 0,
+            record.poc_count,
             now,
         ),
     )
@@ -161,6 +176,8 @@ def _row_to_record(row: sqlite3.Row) -> CVERecord:
         kev_required_action=row["kev_required_action"],
         references=json.loads(row["references_json"]),
         sources=json.loads(row["sources_json"]),
+        public_exploit_available=bool(row["public_exploit_available"]),
+        poc_count=row["poc_count"] or 0,
     )
 
 

@@ -20,5 +20,7 @@ class CVERecord:
     kev_due_date: Optional[str] = None
     kev_known_ransomware_campaign_use: Optional[str] = None
     kev_required_action: Optional[str] = None
+    public_exploit_available: bool = False
+    poc_count: int = 0
     references: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)

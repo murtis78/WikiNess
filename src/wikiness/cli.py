@@ -135,6 +135,33 @@ def sync_kev() -> None:
     console.print(f"[green]KEV sync complete:[/green] {total} records.")
 
 
+@sync_app.command("poc")
+def sync_poc() -> None:
+    """Enrich existing CVEs with PoC availability from nomi-sec/PoC-in-GitHub (requires network)."""
+    from wikiness.ingest.poc import enrich_with_poc
+
+    conn = open_db(_state.db_path)
+    init_schema(conn)
+
+    cve_ids = get_all_cve_ids(conn)
+    if not cve_ids:
+        console.print("[yellow]No CVEs in database. Run 'wikiness sync nvd' first.[/yellow]")
+        raise typer.Exit(1)
+
+    with console.status(f"Fetching PoC availability for {len(cve_ids)} CVEs…"):
+        results = enrich_with_poc(cve_ids)
+        for cve_id, data in results.items():
+            conn.execute(
+                "UPDATE cve SET public_exploit_available = ?, poc_count = ?, updated_at = datetime('now') WHERE cve_id = ?",
+                (1 if data["public_exploit_available"] else 0, data["poc_count"], cve_id),
+            )
+        conn.commit()
+
+    with_poc = sum(1 for d in results.values() if d["public_exploit_available"])
+    update_sync_state(conn, "poc", len(results))
+    console.print(f"[green]PoC sync complete:[/green] {with_poc}/{len(results)} CVEs with public exploit found.")
+
+
 @sync_app.command("all")
 def sync_all(
     api_key: Optional[str] = typer.Option(None, envvar="NVD_API_KEY"),
@@ -240,7 +267,9 @@ def show(
     console.print(f"  [bold]Vector:[/bold]       {record.cvss_vector or '—'}")
     console.print(f"\n  [bold]EPSS Score:[/bold]   {record.epss_score if record.epss_score is not None else '—'}")
     console.print(f"  [bold]EPSS Pctile:[/bold]  {record.epss_percentile if record.epss_percentile is not None else '—'}")
-    console.print(f"\n  [bold]CISA KEV:[/bold]     {'[red]YES — known exploited[/red]' if record.kev else 'no'}")
+    poc_label = f"[red]YES[/red] ({record.poc_count} PoC)" if record.public_exploit_available else "no"
+    console.print(f"\n  [bold]Public Exploit:[/bold] {poc_label}")
+    console.print(f"  [bold]CISA KEV:[/bold]     {'[red]YES — known exploited[/red]' if record.kev else 'no'}")
     if record.kev:
         console.print(f"  [bold]Due Date:[/bold]     {record.kev_due_date or '—'}")
         console.print(f"  [bold]Ransomware:[/bold]   {record.kev_known_ransomware_campaign_use or '—'}")
@@ -354,6 +383,8 @@ def _record_to_dict(r: CVERecord) -> dict:
         "cvss_vector": r.cvss_vector,
         "epss_score": r.epss_score,
         "epss_percentile": r.epss_percentile,
+        "public_exploit_available": r.public_exploit_available,
+        "poc_count": r.poc_count,
         "kev": r.kev,
         "kev_due_date": r.kev_due_date,
         "kev_known_ransomware_campaign_use": r.kev_known_ransomware_campaign_use,

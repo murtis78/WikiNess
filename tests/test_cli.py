@@ -176,6 +176,36 @@ def test_prioritize_no_network(db_path, monkeypatch):
     assert r.exit_code == 0
 
 
+def test_sync_poc_enriches_db(db_path, monkeypatch):
+    import wikiness.ingest.poc as poc_module
+
+    monkeypatch.setattr(
+        poc_module,
+        "enrich_with_poc",
+        lambda cve_ids: {
+            cve_id: {"public_exploit_available": True, "poc_count": 1} for cve_id in cve_ids
+        },
+    )
+
+    r = runner.invoke(app, ["--db", str(db_path), "sync", "poc"])
+    assert r.exit_code == 0
+    assert "PoC sync complete" in r.output
+
+
+def test_show_displays_poc_field(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001"])
+    assert r.exit_code == 0
+    assert "Public Exploit" in r.output
+
+
+def test_show_json_includes_poc_fields(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "show", "CVE-2024-99001"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert "public_exploit_available" in data
+    assert "poc_count" in data
+
+
 # WN-004 — --since-modified CLI tests
 
 
