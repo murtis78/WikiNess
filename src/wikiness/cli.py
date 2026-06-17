@@ -187,13 +187,14 @@ def search(
     limit: int = typer.Option(20, "--limit", help="Maximum results."),
     kev_only: bool = typer.Option(False, "--kev-only", help="Only CISA KEV entries."),
     min_epss: Optional[float] = typer.Option(None, "--min-epss", help="Minimum EPSS score."),
+    poc_only: bool = typer.Option(False, "--poc-only", help="Only CVEs with public exploit available."),
 ) -> None:
     """Search CVEs in local database (offline after sync)."""
     conn = open_db(_state.db_path)
     init_schema(conn)
 
     try:
-        results = fts_search(conn, query, limit=limit, kev_only=kev_only, min_epss=min_epss)
+        results = fts_search(conn, query, limit=limit, kev_only=kev_only, min_epss=min_epss, poc_only=poc_only)
     except Exception as exc:
         err_console.print(f"[red]Search error:[/red] {exc}")
         raise typer.Exit(1)
@@ -214,6 +215,7 @@ def search(
     table.add_column("CVSS", justify="right")
     table.add_column("EPSS", justify="right")
     table.add_column("KEV", justify="center")
+    table.add_column("PoC", justify="center")
     table.add_column("Severity")
     table.add_column("Description", max_width=70)
 
@@ -224,6 +226,7 @@ def search(
             f"{r.cvss_score:.1f}" if r.cvss_score is not None else "—",
             f"{r.epss_score:.4f}" if r.epss_score is not None else "—",
             "[red]YES[/red]" if r.kev else "no",
+            "[red]YES[/red]" if r.public_exploit_available else "no",
             r.cvss_severity or "—",
             snippet,
         )
@@ -287,12 +290,13 @@ def prioritize(
     limit: int = typer.Option(20, "--limit", help="Maximum results."),
     kev_only: bool = typer.Option(False, "--kev-only", help="Only CISA KEV entries."),
     min_epss: Optional[float] = typer.Option(None, "--min-epss", help="Minimum EPSS score."),
+    poc_only: bool = typer.Option(False, "--poc-only", help="Only CVEs with public exploit available."),
 ) -> None:
     """List CVEs ordered by transparent priority score (offline after sync)."""
     conn = open_db(_state.db_path)
     init_schema(conn)
 
-    results = prioritized_list(conn, limit=limit, kev_only=kev_only, min_epss=min_epss)
+    results = prioritized_list(conn, limit=limit, kev_only=kev_only, min_epss=min_epss, poc_only=poc_only)
 
     if not results:
         console.print("[yellow]No CVEs found matching criteria.[/yellow]")
@@ -313,6 +317,7 @@ def prioritize(
     table.add_column("CVSS", justify="right")
     table.add_column("EPSS", justify="right")
     table.add_column("KEV", justify="center")
+    table.add_column("PoC", justify="center")
     table.add_column("Reason")
 
     for record, score in results:
@@ -322,6 +327,7 @@ def prioritize(
             f"{record.cvss_score:.1f}" if record.cvss_score is not None else "—",
             f"{record.epss_score:.4f}" if record.epss_score is not None else "—",
             "[red]YES[/red]" if record.kev else "no",
+            "[red]YES[/red]" if record.public_exploit_available else "no",
             score.reason,
         )
     console.print(table)

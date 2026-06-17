@@ -206,6 +206,49 @@ def test_show_json_includes_poc_fields(db_path):
     assert "poc_count" in data
 
 
+def _add_poc_cve(db_path):
+    conn = open_db(db_path)
+    init_schema(conn)
+    upsert_cve(
+        conn,
+        CVERecord(
+            cve_id="CVE-2024-88001",
+            title="Known Exploit Vulnerability",
+            description="This vulnerability has a known public exploit available.",
+            cvss_score=8.0,
+            public_exploit_available=True,
+            poc_count=2,
+            sources=["NVD"],
+        ),
+    )
+    conn.close()
+
+
+def test_search_poc_only_flag(db_path):
+    _add_poc_cve(db_path)
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "search", "vulnerability", "--poc-only"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert len(data) >= 1
+    assert all(item["public_exploit_available"] for item in data)
+    assert not any(item["cve_id"] in {"CVE-2024-99001", "CVE-2024-99002"} for item in data)
+
+
+def test_prioritize_poc_only_flag(db_path):
+    _add_poc_cve(db_path)
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "prioritize", "--poc-only"])
+    assert r.exit_code == 0
+    data = json.loads(r.output)
+    assert len(data) >= 1
+    assert all(item["public_exploit_available"] for item in data)
+
+
+def test_search_table_has_poc_column(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "search", "apache"])
+    assert r.exit_code == 0
+    assert "PoC" in r.output
+
+
 # WN-004 — --since-modified CLI tests
 
 

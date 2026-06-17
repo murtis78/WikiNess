@@ -23,6 +23,7 @@ def fts_search(
     limit: int = 20,
     kev_only: bool = False,
     min_epss: Optional[float] = None,
+    poc_only: bool = False,
 ) -> list[CVERecord]:
     if _CVE_ID_RE.match(query):
         record = get_cve(conn, query.upper())
@@ -31,6 +32,8 @@ def fts_search(
         if kev_only and not record.kev:
             return []
         if min_epss is not None and (record.epss_score is None or record.epss_score < min_epss):
+            return []
+        if poc_only and not record.public_exploit_available:
             return []
         return [record]
 
@@ -42,6 +45,8 @@ def fts_search(
     if min_epss is not None:
         sql += " AND epss_score >= ?"
         params.append(min_epss)
+    if poc_only:
+        sql += " AND public_exploit_available = 1"
 
     sql += " LIMIT ?"
     params.append(limit)
@@ -59,6 +64,7 @@ def prioritized_list(
     limit: int = 50,
     kev_only: bool = False,
     min_epss: Optional[float] = None,
+    poc_only: bool = False,
 ) -> list[tuple[CVERecord, PriorityScore]]:
     sql = "SELECT * FROM cve WHERE 1=1"
     params: list = []
@@ -68,6 +74,8 @@ def prioritized_list(
     if min_epss is not None:
         sql += " AND epss_score >= ?"
         params.append(min_epss)
+    if poc_only:
+        sql += " AND public_exploit_available = 1"
 
     rows = conn.execute(sql, params).fetchall()
     records = [_row_to_record(row) for row in rows]

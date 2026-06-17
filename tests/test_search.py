@@ -135,3 +135,80 @@ def test_show_does_not_use_network(db, monkeypatch):
     assert r is not None
     score = compute_priority(r)
     assert score.final_score > 0
+
+
+# PoC filter tests
+
+
+def _populate_poc(db):
+    """One CVE with PoC, one without."""
+    upsert_cve(
+        db,
+        CVERecord(
+            cve_id="CVE-2024-88001",
+            title="Exploit available vulnerability",
+            description="Vulnerability with known public exploit available.",
+            cvss_score=8.0,
+            public_exploit_available=True,
+            poc_count=3,
+            sources=["NVD"],
+        ),
+    )
+    upsert_cve(
+        db,
+        CVERecord(
+            cve_id="CVE-2024-88002",
+            title="No exploit vulnerability",
+            description="Vulnerability without known public exploit.",
+            cvss_score=7.0,
+            public_exploit_available=False,
+            poc_count=0,
+            sources=["NVD"],
+        ),
+    )
+
+
+def test_fts_search_poc_only_filter(db):
+    _populate_poc(db)
+    results = fts_search(db, "vulnerability", poc_only=True)
+    assert all(r.public_exploit_available for r in results)
+    assert any(r.cve_id == "CVE-2024-88001" for r in results)
+    assert all(r.cve_id != "CVE-2024-88002" for r in results)
+
+
+def test_prioritized_list_poc_only_filter(db):
+    _populate_poc(db)
+    results = prioritized_list(db, poc_only=True)
+    assert all(r.public_exploit_available for r, _ in results)
+    assert len(results) == 1
+    assert results[0][0].cve_id == "CVE-2024-88001"
+
+
+def test_fts_search_poc_only_cve_id_path(db):
+    _populate_poc(db)
+    assert fts_search(db, "CVE-2024-88002", poc_only=True) == []
+    results = fts_search(db, "CVE-2024-88001", poc_only=True)
+    assert len(results) == 1 and results[0].cve_id == "CVE-2024-88001"
+
+
+def test_poc_only_composes_with_kev_only(db):
+    """Condition 1 — poc_only + kev_only compose : retourne seulement KEV+PoC."""
+    upsert_cve(
+        db,
+        CVERecord(
+            cve_id="CVE-2024-88003",
+            title="KEV and PoC vulnerability",
+            description="Both KEV flag and public exploit present vulnerability.",
+            kev=True,
+            public_exploit_available=True,
+            poc_count=1,
+            sources=["NVD"],
+        ),
+    )
+    _populate_poc(db)
+    results = fts_search(db, "vulnerability", poc_only=True, kev_only=True)
+    assert all(r.kev and r.public_exploit_available for r in results)
+    assert any(r.cve_id == "CVE-2024-88003" for r in results)
+    assert all(r.cve_id not in {"CVE-2024-88001", "CVE-2024-88002"} for r in results)
+    results_p = prioritized_list(db, poc_only=True, kev_only=True)
+    assert all(r.kev and r.public_exploit_available for r, _ in results_p)
