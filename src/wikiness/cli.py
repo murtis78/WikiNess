@@ -11,7 +11,7 @@ from rich.table import Table
 
 from wikiness.config import DEFAULT_DB_PATH
 from wikiness.models import CVERecord
-from wikiness.scoring import compute_priority
+from wikiness.scoring import PriorityScore, compute_priority
 from wikiness.search import fts_search, prioritized_list
 from wikiness.storage import (
     count_cves,
@@ -233,9 +233,38 @@ def search(
     console.print(table)
 
 
+def _show_markdown(record: CVERecord, score: PriorityScore) -> str:
+    lines: list[str] = []
+    lines.append(f"# {record.cve_id}\n")
+    if record.title:
+        lines.append(f"{record.title}\n")
+    lines.append("## Scores\n")
+    lines.append("| Field | Value |")
+    lines.append("|-------|-------|")
+    cvss = f"{record.cvss_score} ({record.cvss_severity})" if record.cvss_score is not None else "—"
+    lines.append(f"| CVSS Score | {cvss} |")
+    epss = f"{record.epss_score:.4f}" if record.epss_score is not None else "—"
+    lines.append(f"| EPSS Score | {epss} |")
+    lines.append(f"| Priority Score | **{score.final_score}** |\n")
+    lines.append("## Threat Intelligence\n")
+    lines.append("| Signal | Status |")
+    lines.append("|--------|--------|")
+    kev_status = "YES — known exploited" if record.kev else "no"
+    lines.append(f"| CISA KEV | {kev_status} |")
+    poc_status = f"YES ({record.poc_count} PoC)" if record.public_exploit_available else "no"
+    lines.append(f"| Public Exploit (PoC) | {poc_status} |\n")
+    lines.append(f"## Priority Reason\n\n{score.reason}\n")
+    if record.references:
+        lines.append("## References\n")
+        for ref in record.references[:5]:
+            lines.append(f"- {ref}")
+    return "\n".join(lines)
+
+
 @app.command()
 def show(
     cve_id: str = typer.Argument(..., help="CVE ID to display."),
+    output_format: str = typer.Option("table", "--format", help="Output format: table or markdown."),
 ) -> None:
     """Show full canonical record for a CVE (offline after sync)."""
     conn = open_db(_state.db_path)
@@ -248,7 +277,12 @@ def show(
 
     score = compute_priority(record)
 
+    _VALID_FORMATS = {"table", "markdown"}
+
     if _state.json_output:
+        if output_format != "table":
+            err_console.print("[red]--json and --format are mutually exclusive.[/red]")
+            raise typer.Exit(1)
         out = _record_to_dict(record)
         out["priority"] = {
             "final_score": score.final_score,
@@ -259,6 +293,17 @@ def show(
             "reason": score.reason,
         }
         print(json.dumps(out, indent=2))
+        return
+
+    if output_format not in _VALID_FORMATS:
+        err_console.print(
+            f"[red]Unknown format '[/red]{output_format}[red]'.[/red] "
+            f"Valid formats: {', '.join(sorted(_VALID_FORMATS))}."
+        )
+        raise typer.Exit(1)
+
+    if output_format == "markdown":
+        print(_show_markdown(record, score))
         return
 
     console.print(f"\n[bold cyan]{record.cve_id}[/bold cyan]")

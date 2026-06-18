@@ -249,6 +249,62 @@ def test_search_table_has_poc_column(db_path):
     assert "PoC" in r.output
 
 
+# WN-011 — --format markdown tests
+
+
+def test_show_format_markdown_heading(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 0
+    assert "# CVE-2024-99001" in r.output
+
+
+def test_show_format_markdown_cvss_scores(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 0
+    assert "9.8" in r.output
+    assert "CRITICAL" in r.output
+
+
+def test_show_format_markdown_kev_poc(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 0
+    assert "KEV" in r.output
+    assert "YES" in r.output
+
+
+def test_show_format_markdown_priority_reason(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 0
+    assert "Priority" in r.output
+    assert "Reason" in r.output
+
+
+def test_show_format_table_default_regression(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001"])
+    assert r.exit_code == 0
+    assert "Public Exploit" in r.output
+    assert "# CVE-2024-99001" not in r.output
+
+
+def test_show_format_markdown_no_network(db_path, monkeypatch):
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no network")))
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 0
+    assert "# CVE-2024-99001" in r.output
+
+
+def test_show_format_invalid_errors(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "show", "CVE-2024-99001", "--format", "xml"])
+    assert r.exit_code == 1
+    assert "table" in r.output or "markdown" in r.output
+
+
+def test_show_json_format_mutually_exclusive(db_path):
+    r = runner.invoke(app, ["--db", str(db_path), "--json", "show", "CVE-2024-99001", "--format", "markdown"])
+    assert r.exit_code == 1
+    assert "mutually exclusive" in r.output.lower()
+
+
 # WN-004 — --since-modified CLI tests
 
 
